@@ -78,7 +78,7 @@ def cargar_configuracion_anual(anio: str, data_dir: Path) -> ConfiguracionAnual:
     )
 
 
-def config_desde_perfil_simple(perfil: "PerfilFormato") -> ConfiguracionAnual:
+def config_desde_perfil_simple(perfil: "PerfilFormato", partidos_override: list[str] | None = None) -> ConfiguracionAnual:
     geo_base = ["#", "CVE_ENTIDAD", "ENTIDAD", "MUNICIPIO", "DF", "DL", "SECCION",
                 "LISTA_NOMINAL", "VOTOS_EMITIDOS"]
     participacion_cols = ["PARTICIPACION", "ABSTENCION"]
@@ -93,7 +93,9 @@ def config_desde_perfil_simple(perfil: "PerfilFormato") -> ConfiguracionAnual:
         "3PP_MV", "VOTOS", "PCN",
     ]
 
-    partidos = perfil.partidos_salida
+    partidos = list(partidos_override if partidos_override is not None else perfil.partidos_salida)
+    if "CNR" not in partidos:
+        partidos.append("CNR")
     partido_cols: list[str] = []
     for partido in partidos:
         partido_cols.append(partido)

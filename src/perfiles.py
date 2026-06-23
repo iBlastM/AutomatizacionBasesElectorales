@@ -148,6 +148,7 @@ def _aliases_base(perfil_id: str) -> dict[str, list[str]]:
         "lista": ["LISTA_NOMINAL", "LISTA_NOMINAL_CASILLA", "Lista Nominal"],
         "votos": ["TOTAL_VOTOS", "VOTOS_EMITIDOS", "Votos Emitidos"],
         "nulos": ["NUM_VOTOS_NULOS", "VOTOS_NULOS", "NULOS", "Nulos"],
+        "CNR": ["CNR", "NUM_VOTOS_CAN_NREG", "NO_REGISTRADOS", "CAND_NO_REGISTRADOS"],
         "FXM": ["FXM", "FM", "FxM"],
         "FxM": ["FxM", "FM", "FXM"],
     }

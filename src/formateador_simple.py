@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from .perfiles import PerfilFormato, TOP_COLUMNS, normalizar_clave
+from .perfiles import PerfilFormato, normalizar_clave
 from .configuracion import ConfiguracionAnual, config_desde_perfil_simple
 
 
@@ -32,8 +32,12 @@ class FormateadorSimple:
         trabajo["__LISTA"] = self._serie_numerica_logica(df, "lista", advertencias)
         trabajo["__VOTOS"] = self._serie_numerica_logica(df, "votos", advertencias)
         trabajo["__NULOS"] = self._serie_numerica_logica(df, "nulos", advertencias)
+        trabajo["__CNR"] = self._serie_numerica_logica(df, "CNR", advertencias)
 
-        for idx, partido in enumerate(self.perfil.partidos_salida):
+        partidos_extra = self._detectar_columnas_extra(df)
+        partidos_salida = list(self.perfil.partidos_salida) + partidos_extra
+
+        for idx, partido in enumerate(partidos_salida):
             trabajo[f"__P_{idx}"] = self._serie_numerica_logica(df, partido, advertencias)
 
         for idx, (etiqueta, componentes) in enumerate(self.perfil.ranking_grupos):
@@ -44,8 +48,9 @@ class FormateadorSimple:
             "__LISTA": "sum",
             "__VOTOS": "sum",
             "__NULOS": "sum",
+            "__CNR": "sum",
         }
-        for idx in range(len(self.perfil.partidos_salida)):
+        for idx in range(len(partidos_salida)):
             agregaciones[f"__P_{idx}"] = "sum"
         for idx in range(len(self.perfil.ranking_grupos)):
             agregaciones[f"__R_{idx}"] = "sum"
@@ -53,99 +58,61 @@ class FormateadorSimple:
         agrupado = trabajo.groupby("SECCION", as_index=False).agg(agregaciones)
         agrupado = agrupado.sort_values("SECCION").reset_index(drop=True)
 
-        config = config_desde_perfil_simple(self.perfil)
-        usar_ranking = self._usar_ranking_referencia(agrupado)
-        filas = [self._fila_salida(row, usar_ranking) for _, row in agrupado.iterrows()]
-        resultado = pd.DataFrame(filas, columns=self.perfil.encabezados_visibles)
+        config = config_desde_perfil_simple(self.perfil, partidos_salida)
+        columnas_base = ["#", "CVE_ENTIDAD", "ENTIDAD", "MUNICIPIO", "DF", "DL", "SECCION",
+                         "LISTA_NOMINAL", "VOTOS_EMITIDOS"]
+
+        filas: list[dict[str, object]] = []
+        for num, (_, row) in enumerate(agrupado.iterrows(), start=1):
+            fila: dict[str, object] = {}
+            fila["#"] = num
+            fila["CVE_ENTIDAD"] = 22
+            fila["ENTIDAD"] = "QUERETARO"
+            fila["MUNICIPIO"] = row["__MUNICIPIO"]
+            fila["DF"] = ""
+            fila["DL"] = ""
+            fila["SECCION"] = int(row["SECCION"])
+            fila["LISTA_NOMINAL"] = self._normalizar_numero(row["__LISTA"])
+            fila["VOTOS_EMITIDOS"] = self._normalizar_numero(row["__VOTOS"])
+            for idx, partido in enumerate(partidos_salida):
+                fila[partido] = self._normalizar_numero(row[f"__P_{idx}"])
+            fila["CNR"] = self._normalizar_numero(row["__CNR"])
+            fila["NULOS"] = self._normalizar_numero(row["__NULOS"])
+            filas.append(fila)
+
+        resultado = pd.DataFrame(filas)
+        columnas_df = columnas_base + partidos_salida + ["CNR", "NULOS"]
+        for col in columnas_df:
+            if col not in resultado.columns:
+                resultado[col] = ""
+        resultado = resultado[columnas_df]
 
         return ResultadoFormateoSimple(df_base=resultado, config=config, advertencias=advertencias)
 
-    def _fila_salida(self, row: pd.Series, usar_ranking_referencia: bool) -> dict[str, object]:
-        salida: dict[str, object] = {col: "" for col in self.perfil.encabezados_visibles}
-        municipio_col = self._columna_salida(["MUNICIPIO"])
-        seccion_col = self._columna_salida(["SECCION", "Seccion"])
-        lista_col = self._columna_salida(["LISTA_NOMINAL", "Lista Nominal"])
-        votos_col = self._columna_salida(["VOTOS_EMITIDOS", "Votos Emitidos"])
-        participacion_col = self._columna_salida(["PARTICIPACION_PCN", "PARTICIPACION", "Participacion (%)"])
-        nulos_col = self._columna_salida(["NULOS", "Nulos"])
 
-        lista = self._normalizar_numero(row["__LISTA"])
-        votos = self._normalizar_numero(row["__VOTOS"])
-        nulos = self._normalizar_numero(row["__NULOS"])
-
-        salida[municipio_col] = row["__MUNICIPIO"]
-        salida[seccion_col] = int(row["SECCION"])
-        salida[lista_col] = lista
-        salida[votos_col] = votos
-        salida[participacion_col] = votos / lista if lista else 0
-        salida[nulos_col] = nulos
-
-        for idx, partido in enumerate(self.perfil.partidos_salida):
-            salida[partido] = self._normalizar_numero(row[f"__P_{idx}"])
-
-        seccion = int(row["SECCION"])
-        if usar_ranking_referencia and seccion in self.perfil.ranking_referencia:
-            ranking = [
-                (etiqueta, votos, idx)
-                for idx, (etiqueta, votos) in enumerate(self.perfil.ranking_referencia[seccion])
+    def _detectar_columnas_extra(self, df: pd.DataFrame) -> list[str]:
+        conocidas = set()
+        for aliases in self.perfil.aliases_columnas.values():
+            for alias in aliases:
+                conocidas.add(normalizar_clave(alias))
+        for partido in self.perfil.partidos_salida:
+            conocidas.add(normalizar_clave(partido))
+        conocidas.update({
+            normalizar_clave(c) for c in [
+                "ID_ESTADO", "NOMBRE_ESTADO", "ID_DISTRITO_LOCAL", "CABECERA_DISTRITAL_LOCAL",
+                "ID_MUNICIPIO", "CASILLAS", "NUM_VOTOS_VALIDOS", "TRIBUNAL", "OBSERVACIONES",
+                "SECCION", "LISTA_NOMINAL", "LISTA_NOMINAL_CASILLA", "TOTAL_VOTOS",
+                "VOTOS_EMITIDOS", "NUM_VOTOS_NULOS", "VOTOS_NULOS", "NUM_VOTOS_CAN_NREG",
             ]
-        else:
-            ranking = []
-            for idx, (etiqueta, _) in enumerate(self.perfil.ranking_grupos):
-                valor = self._normalizar_numero(row[f"__R_{idx}"])
-                if valor > 0:
-                    ranking.append((etiqueta, valor, idx))
-            ranking.sort(key=lambda item: (-item[1], item[2]))
-            ranking = self._seleccionar_top_sin_duplicar_componentes(ranking)
-
-        top_cols = TOP_COLUMNS[self.perfil.id]
-        for orden in range(3):
-            etiqueta_col = top_cols[orden * 2]
-            votos_top_col = top_cols[orden * 2 + 1]
-            if orden < len(ranking):
-                salida[etiqueta_col] = ranking[orden][0]
-                salida[votos_top_col] = ranking[orden][1]
-            else:
-                salida[etiqueta_col] = ""
-                salida[votos_top_col] = 0
-        return salida
-
-    def _usar_ranking_referencia(self, agrupado: pd.DataFrame) -> bool:
-        if not self.perfil.ranking_referencia or not self.perfil.municipios_referencia:
-            return False
-        comparables = 0
-        coincidentes = 0
-        for _, row in agrupado.iterrows():
-            seccion = int(row["SECCION"])
-            municipio_ref = self.perfil.municipios_referencia.get(seccion)
-            if municipio_ref is None:
-                continue
-            comparables += 1
-            if normalizar_clave(row["__MUNICIPIO"]) == normalizar_clave(municipio_ref):
-                coincidentes += 1
-        return comparables > 0 and (coincidentes / comparables) >= 0.8
-
-    def _seleccionar_top_sin_duplicar_componentes(
-        self,
-        ranking: list[tuple[str, int | float, int]],
-    ) -> list[tuple[str, int | float, int]]:
-        seleccionados: list[tuple[str, int | float, int]] = []
-        bloqueados: set[str] = set()
-        componentes_por_indice = {
-            idx: {normalizar_clave(componente) for componente in componentes}
-            for idx, (_, componentes) in enumerate(self.perfil.ranking_grupos)
-        }
-        for etiqueta, valor, idx in ranking:
-            clave = normalizar_clave(etiqueta)
-            if clave in bloqueados:
-                continue
-            seleccionados.append((etiqueta, valor, idx))
-            componentes = componentes_por_indice[idx]
-            if len(componentes) > 1:
-                bloqueados.update(componentes)
-            if len(seleccionados) == 3:
-                break
-        return seleccionados
+        })
+        extras: list[str] = []
+        for col in df.columns:
+            clave = normalizar_clave(col)
+            if clave and clave not in conocidas:
+                serie = pd.to_numeric(df[col].astype(str).str.replace(",", "", regex=False).str.strip(), errors="coerce")
+                if serie.notna().any() and serie.fillna(0).sum() > 0:
+                    extras.append(col)
+        return extras
 
     def _serie_numerica_logica(self, df: pd.DataFrame, nombre: str, advertencias: list[str]) -> pd.Series:
         aliases = self.perfil.aliases_columnas.get(nombre, [nombre])
@@ -201,14 +168,6 @@ class FormateadorSimple:
                 columnas.append(columna)
                 vistas.add(columna)
         return columnas
-
-    def _columna_salida(self, opciones: list[str]) -> str:
-        indice = {normalizar_clave(col): col for col in self.perfil.encabezados_visibles}
-        for opcion in opciones:
-            columna = indice.get(normalizar_clave(opcion))
-            if columna is not None:
-                return columna
-        raise ValueError(f"El formato de referencia no contiene ninguna de estas columnas: {', '.join(opciones)}")
 
     @staticmethod
     def _primero_no_vacio(valores: pd.Series) -> str:
