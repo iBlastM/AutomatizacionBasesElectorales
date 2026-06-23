@@ -24,8 +24,13 @@ Thumbs.db
 *.xlsx
 *.csv
 
-# Except reference/format data files in data/
-!data/*.csv
-!data/*.xlsx
+# Archivos de referencia necesarios para el app
+!data/Ayuntamientos_2018.csv
+!data/Ayuntamientos_2021.csv
+!data/Ayuntamientos_2024.csv
+!data/Gubernatura_2021.csv
+!data/SE_DIP_LOCALES_QRO_2018 - Formato.csv
+!data/SE_DIP_LOCALES_QRO_2021 - Formato.csv
+!data/SE_DIP_LOCALES_QRO_2024 - Formato.csv
 
 .claude/
