@@ -21,14 +21,19 @@ class FormateadorSimple:
 
     def formatear(self, tabla: pd.DataFrame) -> ResultadoFormateoSimple:
         if not self.perfil.es_simple:
-            raise ValueError("FormateadorSimple solo acepta perfiles de ayuntamientos o gubernatura.")
+            raise ValueError("FormateadorSimple solo acepta perfiles simples o genéricos.")
 
         advertencias: list[str] = []
         df = tabla.copy()
         df.columns = [str(col).strip() for col in df.columns]
 
-        trabajo = pd.DataFrame({"SECCION": self._serie_numerica(df, ["SECCION"])})
+        trabajo = pd.DataFrame({"SECCION": self._serie_numerica(df, self.perfil.aliases_columnas["seccion"])})
+        trabajo["__CVE_ENTIDAD"] = self._serie_texto(df, self.perfil.aliases_columnas.get("cve_entidad", []))
+        trabajo["__ENTIDAD"] = self._serie_texto(df, self.perfil.aliases_columnas.get("entidad", []))
+        trabajo["__CVE_MUNICIPIO"] = self._serie_texto(df, self.perfil.aliases_columnas.get("cve_municipio", []))
         trabajo["__MUNICIPIO"] = self._serie_texto(df, self.perfil.aliases_columnas["municipio"])
+        trabajo["__DF"] = self._serie_texto(df, self.perfil.aliases_columnas.get("df", []))
+        trabajo["__DL"] = self._serie_texto(df, self.perfil.aliases_columnas.get("dl", []))
         trabajo["__LISTA"] = self._serie_numerica_logica(df, "lista", advertencias)
         trabajo["__VOTOS"] = self._serie_numerica_logica(df, "votos", advertencias)
         trabajo["__NULOS"] = self._serie_numerica_logica(df, "nulos", advertencias)
@@ -44,7 +49,12 @@ class FormateadorSimple:
             trabajo[f"__R_{idx}"] = self._sumar_componentes(df, componentes, advertencias)
 
         agregaciones = {
+            "__CVE_ENTIDAD": self._primero_no_vacio,
+            "__ENTIDAD": self._primero_no_vacio,
+            "__CVE_MUNICIPIO": self._primero_no_vacio,
             "__MUNICIPIO": self._primero_no_vacio,
+            "__DF": self._primero_no_vacio,
+            "__DL": self._primero_no_vacio,
             "__LISTA": "sum",
             "__VOTOS": "sum",
             "__NULOS": "sum",
@@ -59,18 +69,21 @@ class FormateadorSimple:
         agrupado = agrupado.sort_values("SECCION").reset_index(drop=True)
 
         config = config_desde_perfil_simple(self.perfil, partidos_salida)
-        columnas_base = ["#", "CVE_ENTIDAD", "ENTIDAD", "MUNICIPIO", "DF", "DL", "SECCION",
-                         "LISTA_NOMINAL", "VOTOS_EMITIDOS"]
+        columnas_base = [
+            "#", "CVE_ENTIDAD", "ENTIDAD", "CU_MUNICIPIO", "MUNICIPIO", "DF", "DL", "SECCION",
+            "LISTA_NOMINAL", "VOTOS_EMITIDOS",
+        ]
 
         filas: list[dict[str, object]] = []
         for num, (_, row) in enumerate(agrupado.iterrows(), start=1):
             fila: dict[str, object] = {}
             fila["#"] = num
-            fila["CVE_ENTIDAD"] = 22
-            fila["ENTIDAD"] = "QUERETARO"
-            fila["MUNICIPIO"] = row["__MUNICIPIO"]
-            fila["DF"] = ""
-            fila["DL"] = ""
+            fila["CVE_ENTIDAD"] = self._geografia_o_predeterminado(row["__CVE_ENTIDAD"], 22)
+            fila["ENTIDAD"] = self._geografia_o_predeterminado(row["__ENTIDAD"], "QUERETARO")
+            fila["CU_MUNICIPIO"] = self._geografia_o_predeterminado(row["__CVE_MUNICIPIO"], "")
+            fila["MUNICIPIO"] = self._geografia_o_predeterminado(row["__MUNICIPIO"], "")
+            fila["DF"] = self._geografia_o_predeterminado(row["__DF"], "")
+            fila["DL"] = self._geografia_o_predeterminado(row["__DL"], "")
             fila["SECCION"] = int(row["SECCION"])
             fila["LISTA_NOMINAL"] = self._normalizar_numero(row["__LISTA"])
             fila["VOTOS_EMITIDOS"] = self._normalizar_numero(row["__VOTOS"])
@@ -84,11 +97,10 @@ class FormateadorSimple:
         columnas_df = columnas_base + partidos_salida + ["CNR", "NULOS"]
         for col in columnas_df:
             if col not in resultado.columns:
-                resultado[col] = ""
+                resultado[col] = 0
         resultado = resultado[columnas_df]
 
         return ResultadoFormateoSimple(df_base=resultado, config=config, advertencias=advertencias)
-
 
     def _detectar_columnas_extra(self, df: pd.DataFrame) -> list[str]:
         conocidas = set()
@@ -99,10 +111,16 @@ class FormateadorSimple:
             conocidas.add(normalizar_clave(partido))
         conocidas.update({
             normalizar_clave(c) for c in [
-                "ID_ESTADO", "NOMBRE_ESTADO", "ID_DISTRITO_LOCAL", "CABECERA_DISTRITAL_LOCAL",
-                "ID_MUNICIPIO", "CASILLAS", "NUM_VOTOS_VALIDOS", "TRIBUNAL", "OBSERVACIONES",
-                "SECCION", "LISTA_NOMINAL", "LISTA_NOMINAL_CASILLA", "TOTAL_VOTOS",
-                "VOTOS_EMITIDOS", "NUM_VOTOS_NULOS", "VOTOS_NULOS", "NUM_VOTOS_CAN_NREG",
+                "ID_ESTADO", "NOMBRE_ESTADO", "ID_ENTIDAD", "CLAVE_ENTIDAD", "ENTIDAD", "ESTADO",
+                "ID_DISTRITO_LOCAL", "DISTRITO_LOCAL", "DISTRITO_FEDERAL", "CABECERA_DISTRITAL_LOCAL",
+                "ID_MUNICIPIO", "ID_MUNICIPIO_LOCAL", "CVE_MUNICIPIO", "CLAVE_MUNICIPIO", "MUNICIPIO_LOCAL",
+                "CASILLAS", "CASILLA", "TIPO_CASILLA", "TOTAL_VOTOS_VALIDOS", "NUM_VOTOS_VALIDOS",
+                "NUMERO_VOTOS_VALIDOS", "TRIBUNAL", "OBSERVACIONES", "SECCION", "SECCIÓN", "SECC",
+                "LISTA_NOMINAL", "LISTA_NOMINAL_CASILLA", "LISTADO_NOMINAL", "TOTAL_VOTOS", "VOTOS_EMITIDOS",
+                "TOTAL_VOTACION", "VOTACION_TOTAL", "NUM_VOTOS_NULOS", "VOTOS_NULOS", "NUM_VOTOS_CAN_NREG",
+                "ID_CASILLA", "EXT_CONTIGUA", "ID_TIPO_CANDIDATURA", "ESTATUS_ACTA", "ESTATUS_PAQUETE",
+                "ID_INCIDENTE", "NUM_BOLETAS_RECIBIDAS", "NUM_BOLETAS_SOBRANTES", "NUM_ESCRITOS",
+                "BOLETAS_OTRA_ELECCION",
             ]
         })
         extras: list[str] = []
@@ -143,9 +161,8 @@ class FormateadorSimple:
         if columna is None:
             return pd.Series([0] * len(df), index=df.index, dtype="float64")
         serie = df[columna]
-        if serie.dtype == object:
+        if not pd.api.types.is_numeric_dtype(serie):
             serie = serie.astype(str).str.strip().str.replace(",", "", regex=False)
-            serie = serie.replace({"": "0", " ": "0", "nan": "0", "None": "0"})
         return pd.to_numeric(serie, errors="coerce").fillna(0)
 
     @staticmethod
@@ -177,7 +194,22 @@ class FormateadorSimple:
                 return texto
         return ""
 
+    def _geografia_o_predeterminado(self, valor: object, predeterminado: object) -> object:
+        texto = "" if pd.isna(valor) else str(valor).strip()
+        if texto:
+            try:
+                numero = float(texto)
+                if numero.is_integer():
+                    return int(numero)
+            except ValueError:
+                pass
+            return texto
+        return "" if self.perfil.tipo == "generico" else predeterminado
+
     @staticmethod
     def _normalizar_numero(valor: object) -> int | float:
-        numero = float(valor)
+        try:
+            numero = float(valor)
+        except (TypeError, ValueError):
+            return 0
         return int(numero) if numero.is_integer() else numero
